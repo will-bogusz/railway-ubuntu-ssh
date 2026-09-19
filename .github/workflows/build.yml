@@ -1,0 +1,40 @@
+name: build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Image tag (default 24.04-YYYYMMDD)
+        required: false
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: tag
+        run: |
+          tag="${{ github.event.inputs.tag }}"
+          [ -n "$tag" ] || tag="24.04-$(date -u +%Y%m%d)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ghcr.io/${{ github.repository_owner }}/railway-ubuntu-ssh:${{ steps.tag.outputs.tag }}
+      - run: |
+          echo "ghcr.io/${{ github.repository_owner }}/railway-ubuntu-ssh:${{ steps.tag.outputs.tag }}@${{ steps.build.outputs.digest }}" | tee -a "$GITHUB_STEP_SUMMARY"
