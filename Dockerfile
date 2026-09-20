@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1
 #
-# Ubuntu 24.04 dev box for Railway: sshd behind Railway's TCP proxy, a browser
-# terminal (ttyd behind nginx basic auth) on $PORT, /home/dev on a volume,
-# Claude Code and Codex preinstalled. Everything is pinned; bump the ARGs and
+# Ubuntu 24.04 dev box for Railway: sshd behind Railway's TCP proxy (fail2ban
+# when the container has NET_ADMIN, sshd per-source throttling otherwise), a
+# browser terminal (ttyd behind nginx basic auth) on $PORT, /home/dev on a
+# volume, Claude Code preinstalled. DEVBOX_SSH=off runs the browser terminal
+# only (the "Ubuntu Web Terminal" template). Everything is pinned; bump the ARGs and
 # rebuild. See README.md for the runtime contract.
 
 # ubuntu:24.04 multi-arch index digest, resolved 2026-09-20 from Docker Hub.
@@ -52,7 +54,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      openssh-server openssh-client sudo nginx-light openssl \
+      openssh-server openssh-client sudo nginx-light openssl fail2ban iptables \
       ca-certificates curl wget gnupg git git-lfs \
       build-essential pkg-config \
       python3 python3-pip python3-venv \
@@ -80,10 +82,14 @@ RUN userdel -r ubuntu \
  && chmod 0440 /etc/sudoers.d/dev
 
 COPY sshd_config /etc/ssh/sshd_config.d/10-railway.conf
+COPY fail2ban.local /etc/fail2ban/jail.d/devbox.conf
+# Debian's default jail file forces backend=systemd and nftables; there is no
+# journald here.
+RUN rm -f /etc/fail2ban/jail.d/defaults-debian.conf
 COPY profile.d/20-devbox.sh /etc/profile.d/20-devbox.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh \
- && chmod 0644 /etc/ssh/sshd_config.d/10-railway.conf /etc/profile.d/20-devbox.sh
+ && chmod 0644 /etc/ssh/sshd_config.d/10-railway.conf /etc/profile.d/20-devbox.sh /etc/fail2ban/jail.d/devbox.conf
 
 EXPOSE 22 8080
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

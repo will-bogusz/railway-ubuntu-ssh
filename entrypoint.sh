@@ -16,7 +16,10 @@ fail() {
   exit 1
 }
 
-[ -n "${SSH_PASSWORD:-}" ] || fail "SSH_PASSWORD is empty. Set it in the service's Variables tab (the template generates one) and redeploy."
+# PASSWORD is the web-terminal template's name for the same secret.
+SSH_PASSWORD="${SSH_PASSWORD:-${PASSWORD:-}}"
+[ -n "$SSH_PASSWORD" ] || fail "PASSWORD is empty. Set it in the service's Variables tab (the template generates one) and redeploy."
+case "${DEVBOX_SSH:-on}" in off|no|false|0) SSH_ENABLED=0;; *) SSH_ENABLED=1;; esac
 case "$PORT" in ''|*[!0-9]*) fail "PORT must be a number, got '$PORT'";; esac
 
 # --- home volume -----------------------------------------------------------
@@ -57,11 +60,13 @@ case "${SSH_PASSWORD_AUTH:-yes}" in
   *) rm -f /etc/ssh/sshd_config.d/05-local.conf;;
 esac
 
-for type in ed25519 rsa ecdsa; do
-  key="$STATE_DIR/ssh_host_${type}_key"
-  [ -f "$key" ] || ssh-keygen -q -t "$type" -N '' -f "$key" >/dev/null
-done
-mkdir -p /run/sshd && chmod 0755 /run/sshd
+if [ "$SSH_ENABLED" = 1 ]; then
+  for type in ed25519 rsa ecdsa; do
+    key="$STATE_DIR/ssh_host_${type}_key"
+    [ -f "$key" ] || ssh-keygen -q -t "$type" -N '' -f "$key" >/dev/null
+  done
+  mkdir -p /run/sshd && chmod 0755 /run/sshd
+fi
 
 # --- environment for SSH sessions and login shells --------------------------
 # SSH sessions do not inherit the container environment. Export every service
@@ -78,7 +83,7 @@ while IFS= read -r -d '' entry; do
   value="${entry#*=}"
   [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
   case "$name" in
-    SSH_PASSWORD|AUTHORIZED_KEYS|HOME|PATH|PWD|OLDPWD|SHLVL|_|USER|LOGNAME|SHELL|TERM|HOSTNAME|DEBIAN_FRONTEND) continue;;
+    SSH_PASSWORD|PASSWORD|AUTHORIZED_KEYS|HOME|PATH|PWD|OLDPWD|SHLVL|_|USER|LOGNAME|SHELL|TERM|HOSTNAME|DEBIAN_FRONTEND) continue;;
   esac
   printf 'export %s=%q\n' "$name" "$value" >> /run/devbox-profile.sh
   case "$value" in *$'\n'*) continue;; esac   # pam_env is line-based
@@ -148,37 +153,60 @@ EOF
 nginx -t -q -c /run/devbox-nginx.conf
 
 # --- start -----------------------------------------------------------------
-/usr/sbin/sshd -D -e &
-SSHD_PID=$!
+PIDS=()
+if [ "$SSH_ENABLED" = 1 ]; then
+  # sshd logs to stderr; a small filter mirrors each line to the container log
+  # and writes it syslog-shaped ("Mon DD HH:MM:SS host sshd[pid]: msg") into
+  # /run/devbox-sshd.log, which is the format fail2ban's sshd filter parses.
+  : > /run/devbox-sshd.log; chmod 0640 /run/devbox-sshd.log
+  /usr/sbin/sshd -D -e 2>&1 | while IFS= read -r line; do
+      printf 'sshd: %s\n' "$line" >&2
+      printf '%s %s sshd[1]: %s\n' "$(date '+%b %e %H:%M:%S')" "${HOSTNAME:-devbox}" "$line" >> /run/devbox-sshd.log
+    done &
+  SSHD_PID=$!; PIDS+=("$SSHD_PID")
+  if iptables -w 2 -L INPUT -n >/dev/null 2>&1; then
+    mkdir -p /run/fail2ban
+    fail2ban-server -xf start >/dev/null 2>&1 &
+    FAIL2BAN_PID=$!; PIDS+=("$FAIL2BAN_PID")
+    BRUTE_FORCE="fail2ban (5 failures / 10 min -> 1 h ban) + sshd per-source throttling"
+  else
+    BRUTE_FORCE="sshd per-source throttling (no NET_ADMIN in this container, fail2ban not started)"
+  fi
+fi
 
 setpriv --reuid=dev --regid=dev --init-groups --reset-env \
   /usr/local/bin/ttyd -p "$TTYD_PORT" -i 127.0.0.1 -W \
     -t titleFixed="dev box" -t fontSize=14 -t disableLeaveAlert=true \
     bash -lc 'exec tmux new-session -A -s main' &
-TTYD_PID=$!
+TTYD_PID=$!; PIDS+=("$TTYD_PID")
 
 nginx -c /run/devbox-nginx.conf -g 'daemon off;' &
-NGINX_PID=$!
+NGINX_PID=$!; PIDS+=("$NGINX_PID")
 
 echo "devbox: ubuntu $(. /etc/os-release && echo "$VERSION_ID") | node $(node --version) | claude $(claude --version 2>/dev/null | head -n1)"
-if [ -n "${RAILWAY_TCP_PROXY_DOMAIN:-}" ] && [ -n "${RAILWAY_TCP_PROXY_PORT:-}" ]; then
-  echo "devbox: ssh dev@${RAILWAY_TCP_PROXY_DOMAIN} -p ${RAILWAY_TCP_PROXY_PORT}"
+if [ "$SSH_ENABLED" = 1 ]; then
+  if [ -n "${RAILWAY_TCP_PROXY_DOMAIN:-}" ] && [ -n "${RAILWAY_TCP_PROXY_PORT:-}" ]; then
+    echo "devbox: ssh dev@${RAILWAY_TCP_PROXY_DOMAIN} -p ${RAILWAY_TCP_PROXY_PORT}"
+  else
+    echo "devbox: sshd listens on 22; add a TCP proxy for port 22 under Settings -> Networking to reach it"
+  fi
+  echo "devbox: ssh brute-force protection: $BRUTE_FORCE"
 else
-  echo "devbox: sshd listens on 22; add a TCP proxy for port 22 under Settings -> Networking to reach it"
+  echo "devbox: SSH is off (DEVBOX_SSH=off); browser terminal only"
 fi
 if [ -n "${RAILWAY_PUBLIC_DOMAIN:-}" ]; then
   echo "devbox: browser terminal https://${RAILWAY_PUBLIC_DOMAIN}/  (user dev)"
 else
   echo "devbox: browser terminal on port ${PORT} (user dev)"
 fi
-echo "devbox: password = SSH_PASSWORD in the service's Variables tab; /home/dev is on the volume"
+echo "devbox: password = PASSWORD (or SSH_PASSWORD) in the service's Variables tab; /home/dev is on the volume"
 
 shutdown() {
-  kill "$SSHD_PID" "$TTYD_PID" "$NGINX_PID" 2>/dev/null || true
+  kill "${PIDS[@]}" 2>/dev/null || true
   wait
   exit "${1:-0}"
 }
 trap 'shutdown 0' TERM INT
-wait -n "$SSHD_PID" "$TTYD_PID" "$NGINX_PID" && status=0 || status=$?
+wait -n "${PIDS[@]}" && status=0 || status=$?
 echo "devbox: a service exited with status $status; shutting down" >&2
 shutdown 1

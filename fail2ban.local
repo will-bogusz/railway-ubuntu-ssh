@@ -1,0 +1,15 @@
+# Installed as /etc/fail2ban/jail.d/devbox.conf. Started by the entrypoint only
+# when iptables works in this container (needs CAP_NET_ADMIN); otherwise sshd's
+# PerSourceMaxStartups is the brute-force limiter.
+[DEFAULT]
+backend = polling
+banaction = iptables-multiport
+bantime = 1h
+findtime = 10m
+maxretry = 5
+ignoreip = 127.0.0.1/8 ::1
+
+[sshd]
+enabled = true
+port = 22
+logpath = /run/devbox-sshd.log

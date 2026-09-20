@@ -14,6 +14,12 @@ PubkeyAuthentication yes
 AuthorizedKeysFile .ssh/authorized_keys /etc/ssh/authorized_keys.d/%u
 MaxAuthTries 4
 LoginGraceTime 30
+# Unauthenticated connections per source IP are capped (OpenSSH >= 8.5): the
+# brute-force limiter that needs no capabilities. fail2ban stacks on top when
+# iptables is usable.
+MaxStartups 10:30:60
+PerSourceMaxStartups 3
+PerSourceNetBlockSize 32:128
 UsePAM yes
 
 ClientAliveInterval 60
