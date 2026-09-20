@@ -48,6 +48,16 @@ touching the image.
 
 apt packages come from the Ubuntu 24.04 archive at build time.
 
+## Modes and brute-force protection
+
+`DEVBOX_SSH=off` runs the browser terminal only (the **Ubuntu Web Terminal** template,
+`railway.com/deploy/ubuntu-web-terminal`); `PASSWORD` is accepted as an alias of `SSH_PASSWORD`.
+With SSH on, sshd's `PerSourceMaxStartups 3` / `MaxStartups 10:30:60` throttle unauthenticated
+connections per source; when the container has `CAP_NET_ADMIN` (not on Railway today) the
+entrypoint also starts fail2ban (`/etc/fail2ban/jail.d/devbox.conf`, 5 failures / 10 min → 1 h
+ban) fed by a syslog-shaped copy of sshd's stderr at `/run/devbox-sshd.log`. Verified on Docker
+with `--cap-add NET_ADMIN`: 6 bad passwords → source banned, next connection reset.
+
 ## Build
 
 GitHub Actions builds and pushes (`.github/workflows/build.yml`): **Actions → build → Run
