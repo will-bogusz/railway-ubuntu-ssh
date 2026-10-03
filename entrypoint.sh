@@ -1,8 +1,11 @@
 #!/bin/bash
 # Boot: seed the home volume, set the dev password, wire optional variables,
 # then run sshd (port 22, behind Railway's TCP proxy), ttyd (loopback) and
-# nginx ($PORT, basic auth in front of ttyd, /healthz open). Exits when any of
-# the three dies so Railway's restart policy can act. Never prints a secret.
+# nginx ($PORT, basic auth in front of ttyd, /healthz open). Each daemon runs
+# under a respawn loop: a daemon that dies (OOM kill, `sudo service ssh
+# restart`, a stray pkill) comes back in 2 s instead of taking the container
+# down, because Railway records every container exit after a kill as a crash.
+# The container stops only on SIGTERM. Never prints a secret.
 set -euo pipefail
 
 HOME_DIR=/home/dev
@@ -153,35 +156,59 @@ EOF
 nginx -t -q -c /run/devbox-nginx.conf
 
 # --- start -----------------------------------------------------------------
-PIDS=()
-if [ "$SSH_ENABLED" = 1 ]; then
-  # sshd logs to stderr; a small filter mirrors each line to the container log
-  # and writes it syslog-shaped ("Mon DD HH:MM:SS host sshd[pid]: msg") into
-  # /run/devbox-sshd.log, which is the format fail2ban's sshd filter parses.
-  : > /run/devbox-sshd.log; chmod 0640 /run/devbox-sshd.log
+# supervise NAME CMD...: run CMD in the background and respawn it whenever it
+# exits. The supervisor's own PID goes into PIDS for shutdown.
+supervise() {
+  local name=$1; shift
+  (
+    child=
+    trap '[ -n "$child" ] && kill "$child" 2>/dev/null; exit 0' TERM INT
+    while :; do
+      "$@" &
+      child=$!
+      wait "$child" && st=0 || st=$?
+      echo "devbox: $name exited with status $st; restarting it in 2 s" >&2
+      sleep 2
+    done
+  ) &
+  PIDS+=("$!")
+}
+
+# sshd logs to stderr; a small filter mirrors each line to the container log
+# and writes it syslog-shaped ("Mon DD HH:MM:SS host sshd[pid]: msg") into
+# /run/devbox-sshd.log, which is the format fail2ban's sshd filter parses.
+run_sshd() {
+  # `sudo service ssh restart` starts a second sshd on :22; wait for it to go
+  # rather than failing to bind every 2 s.
+  while ss -Hltn 'sport = :22' | grep -q .; do sleep 10; done
   /usr/sbin/sshd -D -e 2>&1 | while IFS= read -r line; do
       printf 'sshd: %s\n' "$line" >&2
       printf '%s %s sshd[1]: %s\n' "$(date '+%b %e %H:%M:%S')" "${HOSTNAME:-devbox}" "$line" >> /run/devbox-sshd.log
-    done &
-  SSHD_PID=$!; PIDS+=("$SSHD_PID")
+    done
+}
+
+run_ttyd() {
+  setpriv --reuid=dev --regid=dev --init-groups --reset-env \
+    /usr/local/bin/ttyd -p "$TTYD_PORT" -i 127.0.0.1 -W \
+      -t titleFixed="dev box" -t fontSize=14 -t disableLeaveAlert=true \
+      bash -lc 'exec tmux new-session -A -s main'
+}
+
+PIDS=()
+if [ "$SSH_ENABLED" = 1 ]; then
+  : > /run/devbox-sshd.log; chmod 0640 /run/devbox-sshd.log
+  supervise sshd run_sshd
   if iptables -w 2 -L INPUT -n >/dev/null 2>&1; then
     mkdir -p /run/fail2ban
-    fail2ban-server -xf start >/dev/null 2>&1 &
-    FAIL2BAN_PID=$!; PIDS+=("$FAIL2BAN_PID")
+    supervise fail2ban sh -c 'rm -f /run/fail2ban/fail2ban.sock; exec fail2ban-server -xf start >/dev/null 2>&1'
     BRUTE_FORCE="fail2ban (5 failures / 10 min -> 1 h ban) + sshd per-source throttling"
   else
     BRUTE_FORCE="sshd per-source throttling (no NET_ADMIN in this container, fail2ban not started)"
   fi
 fi
 
-setpriv --reuid=dev --regid=dev --init-groups --reset-env \
-  /usr/local/bin/ttyd -p "$TTYD_PORT" -i 127.0.0.1 -W \
-    -t titleFixed="dev box" -t fontSize=14 -t disableLeaveAlert=true \
-    bash -lc 'exec tmux new-session -A -s main' &
-TTYD_PID=$!; PIDS+=("$TTYD_PID")
-
-nginx -c /run/devbox-nginx.conf -g 'daemon off;' &
-NGINX_PID=$!; PIDS+=("$NGINX_PID")
+supervise ttyd run_ttyd
+supervise nginx nginx -c /run/devbox-nginx.conf -g 'daemon off;'
 
 echo "devbox: ubuntu $(. /etc/os-release && echo "$VERSION_ID") | node $(node --version) | claude $(claude --version 2>/dev/null | head -n1)"
 if [ "$SSH_ENABLED" = 1 ]; then
@@ -201,12 +228,16 @@ else
 fi
 echo "devbox: password = PASSWORD (or SSH_PASSWORD) in the service's Variables tab; /home/dev is on the volume"
 
+# Bounded stop: TERM the supervisors and every other process (some helpers
+# ignore TERM), give them a second, then KILL what is left and exit 0 well
+# inside Railway's stop window.
 shutdown() {
+  trap '' TERM INT
   kill "${PIDS[@]}" 2>/dev/null || true
-  wait
-  exit "${1:-0}"
+  kill -TERM -1 2>/dev/null || true
+  sleep 1
+  kill -KILL -1 2>/dev/null || true
+  exit 0
 }
-trap 'shutdown 0' TERM INT
-wait -n "${PIDS[@]}" && status=0 || status=$?
-echo "devbox: a service exited with status $status; shutting down" >&2
-shutdown 1
+trap shutdown TERM INT
+while :; do wait || true; sleep 1; done

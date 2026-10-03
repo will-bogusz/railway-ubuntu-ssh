@@ -5,7 +5,7 @@ The image behind the Railway template **Ubuntu SSH Workstation + Claude Code**
 (through Railway's TCP proxy) or a browser terminal on `$PORT`, with `/home/dev` on a volume
 and Claude Code, Node LTS, Python 3, build-essential, git and `gh` preinstalled.
 
-Deploy it: <https://railway.com/deploy/ubuntu-ssh-workstation>
+Deploy it: <https://railway.com/deploy/kit-ubuntu-ssh-skeleton-0919>
 
 ## Runtime contract
 
@@ -21,7 +21,9 @@ Deploy it: <https://railway.com/deploy/ubuntu-ssh-workstation>
 Every other service variable is exported to login shells too (via
 `/etc/profile.d/10-railway-env.sh`, mode 0640 `root:dev`), except `SSH_PASSWORD`.
 
-Processes (all supervised by the entrypoint; if one dies the container exits 1):
+Processes (each under a respawn loop in the entrypoint: a process that dies, for example to an
+OOM kill or `sudo service ssh restart`, is restarted in-container after 2 s; the container
+itself stops only on SIGTERM, so it never spends Railway's ON_FAILURE restart budget):
 
 - `sshd` on `0.0.0.0:22` — `AllowUsers dev`, root login off, password + public key auth,
   host keys persisted in `/home/dev/.devbox/` (root-only) so redeploys keep their identity.
