@@ -1,11 +1,17 @@
 # railway-ubuntu-ssh
 
-The image behind the Railway template **Ubuntu SSH Workstation + Claude Code**
-(`ghcr.io/will-bogusz/railway-ubuntu-ssh`). An Ubuntu 24.04 dev box you reach over SSH
-(through Railway's TCP proxy) or a browser terminal on `$PORT`, with `/home/dev` on a volume
-and Claude Code, Node LTS, Python 3, build-essential, git and `gh` preinstalled.
+The image behind two Railway templates (`ghcr.io/will-bogusz/railway-ubuntu-ssh`): an Ubuntu 24.04
+box you reach over SSH (through Railway's TCP proxy) or a browser terminal on `$PORT`, with
+`/home/dev` on a volume and Claude Code, Node LTS, Python 3, build-essential, git and `gh`
+preinstalled.
 
-Deploy it: <https://railway.com/deploy/kit-ubuntu-ssh-skeleton-0919>
+- **Ubuntu Dev Box (SSH + Claude Code)** — SSH through Railway's TCP proxy plus a browser terminal, Claude Code preinstalled.
+
+  [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/kit-ubuntu-ssh-skeleton-0919?referralCode=MYUCwz)
+
+- **Ubuntu Web Terminal** — the same image with `DEVBOX_SSH=off`: the browser terminal only.
+
+  [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/ubuntu-web-terminal?referralCode=MYUCwz)
 
 ## Runtime contract
 
