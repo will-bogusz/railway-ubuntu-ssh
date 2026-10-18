@@ -40,6 +40,17 @@ RUN set -eu; \
     echo "${GH_SHA256}  gh.deb" | sha256sum -c -
 
 # ---------------------------------------------------------------------------
+# oomguard: build liboomguard.so (see oomguard.c); the runtime image needs no
+# compiler for it.
+# ---------------------------------------------------------------------------
+FROM ubuntu:24.04@${UBUNTU_DIGEST} AS oomguard
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libc6-dev \
+ && rm -rf /var/lib/apt/lists/*
+COPY oomguard.c /src/oomguard.c
+RUN gcc -shared -fPIC -O2 -Wall -Werror -o /src/liboomguard.so /src/oomguard.c
+
+# ---------------------------------------------------------------------------
 # runtime
 # ---------------------------------------------------------------------------
 FROM ubuntu:24.04@${UBUNTU_DIGEST}
@@ -91,6 +102,12 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY oomadj.sh /usr/local/bin/devbox-oomadj
 RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/devbox-oomadj \
  && chmod 0644 /etc/ssh/sshd_config.d/10-railway.conf /etc/profile.d/20-devbox.sh /etc/fail2ban/jail.d/devbox.conf
+
+# Preload last. Smoke test: every program still runs with it present.
+COPY --from=oomguard /src/liboomguard.so /usr/local/lib/liboomguard.so
+RUN chmod 0644 /usr/local/lib/liboomguard.so \
+ && echo /usr/local/lib/liboomguard.so > /etc/ld.so.preload \
+ && bash -c 'cat /proc/self/oom_score_adj' && node --version && python3 -c pass && sudo -n true
 
 EXPOSE 22 8080
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

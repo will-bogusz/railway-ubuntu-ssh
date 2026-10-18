@@ -43,7 +43,11 @@ itself stops only on SIGTERM, so it never spends Railway's ON_FAILURE restart bu
   kernel kill ttyd, nginx, the respawn loops and the entrypoint instead of the hog; the
   container exited, was recorded `crashed` + `oom_killed`, and after ten such exits the
   deployment stayed CRASHED (measured at 0.5 GB, 2026-10-18). With every process at 0 the
-  kernel kills the hog and the box stays up.
+  kernel kills the hog and the box stays up. The loop alone lost a race (a hog forked
+  from a -950 shell and allocating within 0.25 s still crashed the box one time in
+  three), so `/usr/local/lib/liboomguard.so` (`oomguard.c`, listed in
+  `/etc/ld.so.preload`) also resets every dynamically linked program to 0 at exec,
+  before `main`; the loop remains the backstop for static binaries.
 
 `dev` has `sudo` without a password. The image's pinned Claude Code lives in
 `/usr/local`; `~/.local/bin` and `~/.npm-global/bin` come first on `PATH`, so users update

@@ -15,6 +15,12 @@
 # container lacks it), so this loop resets any negative value above -1000 to 0
 # four times a second. The kernel then kills the largest process, which is the
 # one that ran out of memory, and the box keeps running.
+#
+# A loop alone loses a race: a process forked from a -950 shell that allocates
+# within the 0.25 s window still takes the box down. liboomguard.so (oomguard.c,
+# in /etc/ld.so.preload) closes it by resetting each dynamically linked program
+# at exec, before main(). This loop is the backstop for static binaries and for
+# processes that were already running.
 set -u
 exec {tick}<> <(:)   # read -t on an idle pipe: a sleep without a fork
 while :; do
