@@ -5,7 +5,9 @@
 # under a respawn loop: a daemon that dies (OOM kill, `sudo service ssh
 # restart`, a stray pkill) comes back in 2 s instead of taking the container
 # down, because Railway records every container exit after a kill as a crash.
-# The container stops only on SIGTERM. Never prints a secret.
+# devbox-oomadj (oomadj.sh) keeps `railway ssh` sessions from being shielded
+# from the OOM killer, so a memory hog started there dies instead of these
+# loops. The container stops only on SIGTERM. Never prints a secret.
 set -euo pipefail
 
 HOME_DIR=/home/dev
@@ -208,6 +210,7 @@ if [ "$SSH_ENABLED" = 1 ]; then
 fi
 
 supervise ttyd run_ttyd
+supervise oomadj /usr/local/bin/devbox-oomadj
 supervise nginx nginx -c /run/devbox-nginx.conf -g 'daemon off;'
 
 echo "devbox: ubuntu $(. /etc/os-release && echo "$VERSION_ID") | node $(node --version) | claude $(claude --version 2>/dev/null | head -n1)"

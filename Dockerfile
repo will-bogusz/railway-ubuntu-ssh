@@ -88,7 +88,8 @@ COPY fail2ban.local /etc/fail2ban/jail.d/devbox.conf
 RUN rm -f /etc/fail2ban/jail.d/defaults-debian.conf
 COPY profile.d/20-devbox.sh /etc/profile.d/20-devbox.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod 0755 /usr/local/bin/entrypoint.sh \
+COPY oomadj.sh /usr/local/bin/devbox-oomadj
+RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/devbox-oomadj \
  && chmod 0644 /etc/ssh/sshd_config.d/10-railway.conf /etc/profile.d/20-devbox.sh /etc/fail2ban/jail.d/devbox.conf
 
 EXPOSE 22 8080

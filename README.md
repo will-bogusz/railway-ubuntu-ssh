@@ -38,6 +38,12 @@ itself stops only on SIGTERM, so it never spends Railway's ON_FAILURE restart bu
 - `nginx` on `0.0.0.0:$PORT` — basic auth `dev:$SSH_PASSWORD` in front of ttyd (websocket
   proxied); `GET /healthz` is unauthenticated and proxies to ttyd's index, so a 200 proves
   the terminal is up.
+- `devbox-oomadj` — four times a second, resets any negative `oom_score_adj` (above -1000)
+  to 0. Railway starts `railway ssh` sessions at -950, so a memory hog run there made the
+  kernel kill ttyd, nginx, the respawn loops and the entrypoint instead of the hog; the
+  container exited, was recorded `crashed` + `oom_killed`, and after ten such exits the
+  deployment stayed CRASHED (measured at 0.5 GB, 2026-10-18). With every process at 0 the
+  kernel kills the hog and the box stays up.
 
 `dev` has `sudo` without a password. The image's pinned Claude Code lives in
 `/usr/local`; `~/.local/bin` and `~/.npm-global/bin` come first on `PATH`, so users update
